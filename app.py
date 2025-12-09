@@ -79,7 +79,7 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
     - **Artist Inspiration:** {artist_instruction}.
 
     TASK:
-    Create distinct musical lyrics for the selected styles to help students memorize the content.
+    Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
 
     REQUIREMENTS:
     1. **Educational Accuracy:** You MUST include specific formulas, definitions, and lists from the text.

@@ -53,7 +53,7 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
     """
     Generates songs based on custom user parameters.
     """
-    model = genai.GenerativeModel('gemini-2.5-pro') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
     
     style_list_str = ", ".join(styles)
     

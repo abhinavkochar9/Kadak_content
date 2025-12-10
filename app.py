@@ -129,7 +129,8 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
 st.sidebar.header("🎛️ Studio Controls")
 
 style_options = [
-    "Desi Hip-Hop / Trap", 
+    "Desi Hip-Hop / Trap", "HOOKY & VIRAL MELODIC RAP", 
+
     "Punjabi Drill", 
     "Bollywood Pop Anthem", 
     "Lofi Study Beats", 

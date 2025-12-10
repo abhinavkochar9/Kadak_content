@@ -3,7 +3,6 @@ import google.generativeai as genai
 import pdfplumber
 from dotenv import load_dotenv
 import os
-import json
 import textwrap
 
 # --- CONFIGURATION & SETUP ---
@@ -51,44 +50,98 @@ def extract_text_from_pdf(pdf_file, max_pages=15):
     return text
 
 
-def safe_parse_songs(cleaned_text, styles):
+def parse_songs_from_text(raw_text, styles):
     """
-    Try to parse JSON from model text.
-    If it fails, return a safe fallback structure.
+    Parse songs from the custom block format:
+
+    === SONG START ===
+    TYPE: ...
+    TITLE: ...
+    VIBE: ...
+    LYRICS:
+    line 1
+    line 2
+    ...
+    === SONG END ===
     """
-    # 1) direct attempt
-    try:
-        return json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        pass
+    songs = []
+    blocks = raw_text.split("=== SONG START ===")
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
 
-    # 2) try to cut to first { ... last }
-    start = cleaned_text.find("{")
-    end = cleaned_text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = cleaned_text[start:end+1]
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
+        # Trim at SONG END if present
+        if "=== SONG END ===" in block:
+            block = block.split("=== SONG END ===")[0].strip()
 
-    # 3) FINAL FALLBACK → never crash, just wrap raw text as one song
-    main_style = styles[0] if styles else "Custom Style"
-    fallback = {
-        "songs": [
+        lines = [l.rstrip("\r") for l in block.splitlines()]
+        type_val = ""
+        title_val = ""
+        vibe_val = ""
+        lyrics_lines = []
+        in_lyrics = False
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped and not in_lyrics:
+                continue
+
+            if stripped.startswith("TYPE:"):
+                type_val = stripped[len("TYPE:"):].strip()
+            elif stripped.startswith("TITLE:"):
+                title_val = stripped[len("TITLE:"):].strip()
+            elif stripped.startswith("VIBE:"):
+                vibe_val = stripped[len("VIBE:"):].strip()
+            elif stripped.startswith("LYRICS:"):
+                in_lyrics = True
+            else:
+                if in_lyrics:
+                    lyrics_lines.append(line)
+
+        lyrics_text = "\n".join(lyrics_lines).strip()
+
+        # Fallbacks if model misses some fields
+        if not type_val:
+            idx = len(songs)
+            if idx < len(styles):
+                type_val = styles[idx]
+            elif styles:
+                type_val = styles[0]
+            else:
+                type_val = "Custom Style"
+
+        if not title_val:
+            title_val = f"BTN Track {len(songs) + 1} – beyond the notz"
+
+        if not vibe_val:
+            vibe_val = "Moody, modern educational trap beat, beyond the notz."
+
+        if not lyrics_text:
+            lyrics_text = block
+
+        songs.append(
+            {
+                "type": type_val,
+                "title": title_val,
+                "vibe_description": vibe_val,
+                "lyrics": lyrics_text,
+            }
+        )
+
+    # If nothing parsed, fallback: whole text as one song
+    if not songs:
+        main_style = styles[0] if styles else "Custom Style"
+        songs.append(
             {
                 "type": main_style,
                 "title": "BTN Originals – beyond the notz",
-                "vibe_description": (
-                    "Raw model output captured. Use this as a creative style / "
-                    "production prompt. (JSON parse failed)\n\n"
-                    + cleaned_text[:500]
-                ),
-                "lyrics": cleaned_text,
+                "vibe_description": "Raw model output. Use as creative reference.",
+                "lyrics": raw_text,
             }
-        ]
-    }
-    return fallback
+        )
+
+    return {"songs": songs}
 
 
 def generate_songs(
@@ -102,6 +155,7 @@ def generate_songs(
 ):
     """
     Generates songs based on custom user parameters including exact duration in minutes.
+    Uses a custom text format instead of JSON for robustness.
     """
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
@@ -155,55 +209,60 @@ def generate_songs(
         )
 
     prompt = f"""
-    You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
-    
-    SOURCE MATERIAL (TEXTBOOK CHAPTER):
-    {text_content[:25000]}
+You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
 
-    USER REQUEST PARAMETERS:
-    - Target Styles: {style_list_str} (Generate one song for each selected style).
-    - Language Mix: {language_instruction}.
-    - Content Focus: {focus_instruction}.
-    - Artist Inspiration: {artist_instruction}.
-    - Target Duration: {duration_minutes} Minutes.
-    - Required Structure: {structure}
-    - Special Instructions: {custom_instructions}
+SOURCE MATERIAL (TEXTBOOK CHAPTER):
+{text_content[:15000]}
 
-    TASK:
-    Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
+USER REQUEST PARAMETERS:
+- Target Styles: {style_list_str} (Generate one song for each selected style).
+- Language Mix: {language_instruction}.
+- Content Focus: {focus_instruction}.
+- Artist Inspiration: {artist_instruction}.
+- Target Duration: {duration_minutes} Minutes.
+- Required Structure: {structure}
+- Special Instructions: {custom_instructions}
 
-    REQUIREMENTS:
-    1. Educational Accuracy: You MUST include specific formulas, definitions, and lists from the text.
-    2. Structure: Strictly follow the "{structure}" outlined above to match the requested time length.
-    3. The Hook: The chorus must be extremely catchy and repetitive.
-    4. Signature Intro: Every song MUST start with a short line of random vocal ad-libs
-       (for example: "yeah, ayy, okay, listen", etc.) followed IMMEDIATELY by a line
-       that contains the exact phrase "beyond the notz". These ad-libs should vary
-       between songs.
-    5. Signature Phrase in Hook: The phrase "beyond the notz" must also appear at
-       least once in the hook/chorus of every song.
-    6. Overall Tone: Keep it a smooth Hindi–English hybrid with strong rhythm and
-       study-focused storytelling.
+TASK:
+Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
 
-    OUTPUT FORMAT:
-    Return ONLY a raw JSON object (no markdown) with this structure:
-    {{
-        "songs": [
-            {{
-                "type": "Style Name",
-                "title": "Creative Song Title",
-                "vibe_description": "Detailed prompt for AI Music Generator (Instruments, BPM, Mood, Vocals)",
-                "lyrics": "Full lyrics here..."
-            }}
-        ]
-    }}
-    """
+REQUIREMENTS:
+1. Educational Accuracy: You MUST include specific formulas, definitions, and lists from the text.
+2. Structure: Strictly follow the "{structure}" outlined above to match the requested time length.
+3. The Hook: The chorus must be extremely catchy and repetitive.
+4. Signature Intro: Every song MUST start with a short line of random vocal ad-libs
+   (for example: "yeah, ayy, okay, listen", etc.) followed IMMEDIATELY by a line
+   that contains the exact phrase "beyond the notz". These ad-libs should vary
+   between songs.
+5. Signature Phrase in Hook: The phrase "beyond the notz" must also appear at
+   least once in the hook/chorus of every song.
+6. Overall Tone: Keep it a smooth Hindi–English hybrid with strong rhythm and
+   study-focused storytelling.
+
+OUTPUT FORMAT (VERY IMPORTANT):
+Return the songs ONLY in the following exact text format.
+Do NOT add any explanations or extra text outside this structure.
+
+For EACH song, output:
+
+=== SONG START ===
+TYPE: <Style Name>
+TITLE: <Creative Song Title>
+VIBE: <Detailed prompt for AI Music Generator (Instruments, BPM, Mood, Vocals)>
+LYRICS:
+<Full lyrics here, line by line>
+=== SONG END ===
+
+Repeat this block for each generated song (one per selected style).
+"""
 
     try:
         response = model.generate_content(prompt)
-        raw_text = response.text or ""
-        cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
-        return safe_parse_songs(cleaned_text, styles)
+        raw_text = (response.text or "").strip()
+        if not raw_text:
+            st.error("AI Generation Error: Empty response from model.")
+            return None
+        return parse_songs_from_text(raw_text, styles)
     except Exception as e:
         st.error(f"AI Generation Error: {e}")
         return None
@@ -326,7 +385,6 @@ if st.session_state.song_data:
                 with col2:
                     st.info("🎹 AI Style Prompt")
                     st.markdown("**Style for Suno**")
-                    # Wrap long style description so full text is visible
                     wrapped_vibe = textwrap.fill(song["vibe_description"], width=80)
                     st.code(wrapped_vibe, language=None)
 

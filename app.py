@@ -1,6 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
-import pdfplumber  # <--- REPLACED PyPDF2 WITH PDFPLUMBER
+import pdfplumber 
 from dotenv import load_dotenv
 import os
 import json
@@ -33,14 +33,11 @@ if api_key:
 def extract_text_from_pdf(pdf_file):
     """
     Extracts raw text from an uploaded PDF file using pdfplumber.
-    This is much more robust than PyPDF2 and handles weird characters better.
     """
     text = ""
     try:
-        # pdfplumber requires the file to be treated as a path or file-like object
         with pdfplumber.open(pdf_file) as pdf:
             for page in pdf.pages:
-                # Extract text and handle potential None returns
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
@@ -102,7 +99,6 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
     
     try:
         response = model.generate_content(prompt)
-        # Clean up potential markdown code blocks
         cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_text)
     except Exception as e:
@@ -121,11 +117,19 @@ style_options = [
     "EDM / Party",
     "Old School 90s Rap"
 ]
+
 selected_styles = st.sidebar.multiselect(
     "Select Music Styles", 
     options=style_options, 
-    default=["Desi Hip-Hop / Trap", "Bollywood Pop Anthem"]
+    default=["Desi Hip-Hop / Trap"]
 )
+
+# --- NEW ADDITION: Custom Style Input ---
+custom_style_input = st.sidebar.text_input(
+    "➕ Add Custom Style (Optional)", 
+    placeholder="e.g. K-Pop, Heavy Metal, Ghazal"
+)
+# ----------------------------------------
 
 st.sidebar.subheader("🗣️ Language Mixer")
 lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
@@ -147,17 +151,28 @@ if uploaded_file is not None:
     generate_btn = st.button("🚀 Generate Tracks", type="primary")
     
     if generate_btn:
+        # --- LOGIC UPDATE: Combine dropdown selection with custom input ---
+        final_styles = selected_styles.copy()
+        if custom_style_input and custom_style_input.strip() != "":
+            # Only add if not already present to avoid duplicates
+            if custom_style_input not in final_styles:
+                final_styles.append(custom_style_input)
+        # ----------------------------------------------------------------
+
         if not api_key:
             st.warning("Please provide a Google API Key in the sidebar.")
-        elif not selected_styles:
-            st.warning("Please select at least one music style.")
+        
+        # Check 'final_styles' instead of 'selected_styles'
+        elif not final_styles:
+            st.warning("Please select a style or add a custom one.")
+            
         else:
             with st.spinner("🎧 Extraction & Composing... (This may take 30 seconds)"):
-                # Extract text using the new robust function
                 chapter_text = extract_text_from_pdf(uploaded_file)
                 
                 if chapter_text:
-                    data = generate_songs(chapter_text, selected_styles, lang_mix, artist_ref, focus_topic)
+                    # Pass 'final_styles' to the generator
+                    data = generate_songs(chapter_text, final_styles, lang_mix, artist_ref, focus_topic)
                     if data:
                         st.session_state.song_data = data
                         st.rerun()

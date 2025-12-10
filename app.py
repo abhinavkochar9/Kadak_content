@@ -176,7 +176,7 @@ additional_instructions = st.sidebar.text_area(
 )
 
 # --- MAIN UI ---
-st.title("🎹 StudyBeats AI Pro")
+st.title("🎹 BTN Originals AI Pro")
 st.markdown("Transform NCERT Chapters into Custom Songs.")
 
 if "song_data" not in st.session_state:

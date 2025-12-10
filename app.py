@@ -10,7 +10,7 @@ load_dotenv()
 
 # Page Config
 st.set_page_config(
-    page_title="StudyBeats AI Pro 🎧",
+    page_title="BTN Originals AI Pro 🎧",
     page_icon="🎹",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,14 +30,17 @@ if api_key:
 
 # --- HELPER FUNCTIONS ---
 
-def extract_text_from_pdf(pdf_file):
+def extract_text_from_pdf(pdf_file, max_pages=15):
     """
     Extracts raw text from an uploaded PDF file using pdfplumber.
+    Limits to first `max_pages` pages for speed.
     """
     text = ""
     try:
         with pdfplumber.open(pdf_file) as pdf:
-            for page in pdf.pages:
+            for i, page in enumerate(pdf.pages):
+                if i >= max_pages:
+                    break
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
@@ -47,12 +50,24 @@ def extract_text_from_pdf(pdf_file):
     return text
 
 
-def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic,
-                   additional_instructions, duration_minutes):
+def generate_songs(
+    text_content,
+    styles,
+    language_mix,
+    artist_ref,
+    focus_topic,
+    additional_instructions,
+    duration_minutes
+):
     """
     Generates songs based on custom user parameters including exact duration in minutes.
     """
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        generation_config={
+            "max_output_tokens": 900  # keeps responses tighter & faster
+        }
+    )
 
     style_list_str = ", ".join(styles)
 
@@ -77,7 +92,6 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic,
     )
 
     # --- DURATION TO STRUCTURE MAPPING ---
-    # AI writes text, not time, so we map minutes to structural complexity
     if duration_minutes <= 1.5:
         structure = (
             "Quick Snippet: Intro ad-libs -> Verse 1 -> Chorus -> Outro "
@@ -103,7 +117,7 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic,
     You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
     
     SOURCE MATERIAL (TEXTBOOK CHAPTER):
-    {text_content[:25000]} 
+    {text_content[:12000]}
 
     USER REQUEST PARAMETERS:
     - Target Styles: {style_list_str} (Generate one song for each selected style).
@@ -146,9 +160,7 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic,
 
     try:
         response = model.generate_content(prompt)
-        cleaned_text = (
-            response.text.replace("```json", "").replace("```", "").strip()
-        )
+        cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_text)
     except Exception as e:
         st.error(f"AI Generation Error: {e}")
@@ -182,7 +194,6 @@ custom_style_input = st.sidebar.text_input(
 st.sidebar.subheader("🗣️ Language Mixer")
 lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
 
-# --- MINUTE SLIDER ---
 st.sidebar.subheader("⏱️ Track Duration")
 duration_minutes = st.sidebar.slider(
     "Length (Minutes)",
@@ -203,9 +214,7 @@ focus_topic = st.sidebar.text_input(
 
 additional_instructions = st.sidebar.text_area(
     "📝 Additional Instructions",
-    placeholder=(
-        "e.g. Use lots of rhyming slang, make the bridge about a specific formula..."
-    ),
+    placeholder="e.g. Use lots of rhyming slang, make the bridge about a specific formula...",
     height=100,
 )
 
@@ -234,10 +243,11 @@ if uploaded_file is not None:
             st.warning("Please select a style or add a custom one.")
 
         else:
-            with st.spinner("🎧 Extraction & Composing..."):
-                chapter_text = extract_text_from_pdf(uploaded_file)
+            with st.spinner("📄 Extracting chapter text..."):
+                chapter_text = extract_text_from_pdf(uploaded_file, max_pages=15)
 
-                if chapter_text:
+            if chapter_text:
+                with st.spinner("🎧 Composing tracks..."):
                     data = generate_songs(
                         chapter_text,
                         final_styles,
@@ -247,9 +257,9 @@ if uploaded_file is not None:
                         additional_instructions,
                         duration_minutes,
                     )
-                    if data:
-                        st.session_state.song_data = data
-                        st.rerun()
+                if data:
+                    st.session_state.song_data = data
+                    st.rerun()
 
 # --- DISPLAY RESULTS ---
 if st.session_state.song_data:
@@ -272,7 +282,7 @@ if st.session_state.song_data:
                     st.code(song["lyrics"], language=None)
 
                 with col2:
-                    st.info("🎹 AI Production Prompt")
+                    st.info("🎹 AI Style Prompt")
                     st.markdown("**Prompt for Suno / AI DAW**")
                     st.code(song["vibe_description"], language=None)
 

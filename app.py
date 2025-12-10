@@ -46,7 +46,7 @@ def extract_text_from_pdf(pdf_file):
         return None
     return text
 
-def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
+def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, additional_instructions):
     """
     Generates songs based on custom user parameters.
     """
@@ -62,6 +62,9 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
         
     focus_instruction = f"Focus specifically on this topic: {focus_topic}" if focus_topic else "Cover the most important exam topics from the chapter."
     artist_instruction = f"Take inspiration from the style of: {artist_ref}" if artist_ref else ""
+    
+    # Format the additional instructions for the prompt
+    custom_instructions = f"USER SPECIAL INSTRUCTIONS: {additional_instructions}" if additional_instructions else ""
 
     prompt = f"""
     You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
@@ -74,6 +77,7 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic):
     - **Language Mix:** {language_instruction}.
     - **Content Focus:** {focus_instruction}.
     - **Artist Inspiration:** {artist_instruction}.
+    - **Special Instructions:** {custom_instructions}
 
     TASK:
     Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
@@ -124,12 +128,11 @@ selected_styles = st.sidebar.multiselect(
     default=["Desi Hip-Hop / Trap"]
 )
 
-# --- NEW ADDITION: Custom Style Input ---
+# Custom Style Input
 custom_style_input = st.sidebar.text_input(
     "➕ Add Custom Style (Optional)", 
     placeholder="e.g. K-Pop, Heavy Metal, Ghazal"
 )
-# ----------------------------------------
 
 st.sidebar.subheader("🗣️ Language Mixer")
 lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
@@ -137,6 +140,14 @@ lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
 st.sidebar.subheader("✨ Fine Tuning")
 artist_ref = st.sidebar.text_input("Artist Inspiration (Optional)", placeholder="e.g. Divine, Arijit Singh")
 focus_topic = st.sidebar.text_input("Focus Topic (Optional)", placeholder="e.g. Soaps, Covalent Bonding")
+
+# --- NEW: Additional Instructions Input ---
+additional_instructions = st.sidebar.text_area(
+    "📝 Additional Instructions",
+    placeholder="e.g. Use lots of rhyming slang, make the bridge about a specific formula, keep it under 2 minutes...",
+    height=100
+)
+# ------------------------------------------
 
 # --- MAIN UI ---
 st.title("🎹 StudyBeats AI Pro")
@@ -151,18 +162,15 @@ if uploaded_file is not None:
     generate_btn = st.button("🚀 Generate Tracks", type="primary")
     
     if generate_btn:
-        # --- LOGIC UPDATE: Combine dropdown selection with custom input ---
+        # Combine dropdown selection with custom input
         final_styles = selected_styles.copy()
         if custom_style_input and custom_style_input.strip() != "":
-            # Only add if not already present to avoid duplicates
             if custom_style_input not in final_styles:
                 final_styles.append(custom_style_input)
-        # ----------------------------------------------------------------
 
         if not api_key:
             st.warning("Please provide a Google API Key in the sidebar.")
         
-        # Check 'final_styles' instead of 'selected_styles'
         elif not final_styles:
             st.warning("Please select a style or add a custom one.")
             
@@ -171,8 +179,15 @@ if uploaded_file is not None:
                 chapter_text = extract_text_from_pdf(uploaded_file)
                 
                 if chapter_text:
-                    # Pass 'final_styles' to the generator
-                    data = generate_songs(chapter_text, final_styles, lang_mix, artist_ref, focus_topic)
+                    # Pass additional_instructions to the generator
+                    data = generate_songs(
+                        chapter_text, 
+                        final_styles, 
+                        lang_mix, 
+                        artist_ref, 
+                        focus_topic, 
+                        additional_instructions  # <--- NEW ARGUMENT
+                    )
                     if data:
                         st.session_state.song_data = data
                         st.rerun()

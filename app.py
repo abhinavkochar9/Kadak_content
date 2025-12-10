@@ -67,13 +67,13 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     # --- DURATION TO STRUCTURE MAPPING ---
     # AI writes text, not time, so we map minutes to structural complexity
     if duration_minutes <= 1.5:
-        structure = "Quick Snippet: Verse 1 -> Chorus -> Outro (Approx 150 words)"
+        structure = "Quick Snippet: Intro ad-libs -> Verse 1 -> Chorus -> Outro (Approx 150 words)"
     elif 1.5 < duration_minutes <= 2.5:
-        structure = "Standard Radio Edit: Verse 1 -> Chorus -> Verse 2 -> Chorus (Approx 200-250 words)"
+        structure = "Standard Radio Edit: Intro ad-libs -> Verse 1 -> Chorus -> Verse 2 -> Chorus (Approx 200-250 words)"
     elif 2.5 < duration_minutes <= 3.5:
-        structure = "Full Song: Intro -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Bridge -> Chorus -> Outro (Approx 300-350 words)"
+        structure = "Full Song: Intro ad-libs -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Bridge -> Chorus -> Outro (Approx 300-350 words)"
     else: # > 3.5 minutes
-        structure = "Extended Anthem: Intro -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Solo/Bridge -> Verse 3 -> Chorus -> Outro (Approx 400+ words)"
+        structure = "Extended Anthem: Intro ad-libs -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Solo/Bridge -> Verse 3 -> Chorus -> Outro (Approx 400+ words)"
 
     prompt = f"""
     You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
@@ -97,6 +97,8 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     1. **Educational Accuracy:** You MUST include specific formulas, definitions, and lists from the text.
     2. **Structure:** Strictly follow the "{structure}" outlined above to match the requested time length.
     3. **The Hook:** The chorus must be extremely catchy and repetitive.
+    4. **Signature Intro:** Every song MUST start with a short line of random vocal ad-libs (e.g. "yeah, ayy, okay, listen", etc.) followed IMMEDIATELY by a line containing the exact phrase "beyond the notz". These ad-libs should vary between songs.
+    5. **Signature Phrase in Hook:** The phrase "beyond the notz" must also appear at least once in the hook/chorus of every song.
 
     OUTPUT FORMAT:
     Return ONLY a raw JSON object (no markdown) with this structure:
@@ -227,10 +229,26 @@ if st.session_state.song_data:
                 col1, col2 = st.columns([1.5, 1])
                 with col1:
                     st.subheader(f"Title: {song['title']}")
+                    
+                    # LYRICS AREA + COPY BUTTON
                     st.text_area("Lyrics", value=song['lyrics'], height=600, key=f"lyrics_{i}")
+                    lyrics_json = json.dumps(song['lyrics'])
+                    st.markdown(
+                        f"<button style='margin-top:6px;padding:6px 10px;border-radius:6px;border:none;cursor:pointer;' onclick='navigator.clipboard.writeText({lyrics_json})'>📋 Copy Lyrics</button>",
+                        unsafe_allow_html=True
+                    )
+
                 with col2:
                     st.info("🎹 **AI Production Prompt**")
                     st.markdown(f"_{song['vibe_description']}_")
+                    
+                    # COPY BUTTON FOR AI PRODUCTION PROMPT
+                    vibe_json = json.dumps(song['vibe_description'])
+                    st.markdown(
+                        f"<button style='margin-top:6px;padding:6px 10px;border-radius:6px;border:none;cursor:pointer;' onclick='navigator.clipboard.writeText({vibe_json})'>📋 Copy 🎹 AI Production Prompt</button>",
+                        unsafe_allow_html=True
+                    )
+
                     st.markdown("---")
                     st.success("✨ **Tip:** Use this prompt in Suno.ai")
                     

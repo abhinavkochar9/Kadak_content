@@ -4,6 +4,7 @@ import pdfplumber
 from dotenv import load_dotenv
 import os
 import json
+import textwrap
 
 # --- CONFIGURATION & SETUP ---
 load_dotenv()
@@ -48,6 +49,46 @@ def extract_text_from_pdf(pdf_file, max_pages=15):
         st.error(f"Error reading PDF: {e}")
         return None
     return text
+
+
+def safe_parse_songs(cleaned_text, styles):
+    """
+    Try to parse JSON from model text.
+    If it fails, return a safe fallback structure.
+    """
+    # 1) direct attempt
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2) try to cut to first { ... last }
+    start = cleaned_text.find("{")
+    end = cleaned_text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned_text[start:end+1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # 3) FINAL FALLBACK → never crash, just wrap raw text as one song
+    main_style = styles[0] if styles else "Custom Style"
+    fallback = {
+        "songs": [
+            {
+                "type": main_style,
+                "title": "BTN Originals – beyond the notz",
+                "vibe_description": (
+                    "Raw model output captured. Use this as a creative style / "
+                    "production prompt. (JSON parse failed)\n\n"
+                    + cleaned_text[:500]
+                ),
+                "lyrics": cleaned_text,
+            }
+        ]
+    }
+    return fallback
 
 
 def generate_songs(
@@ -117,7 +158,7 @@ def generate_songs(
     You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
     
     SOURCE MATERIAL (TEXTBOOK CHAPTER):
-    {text_content[:12000]}
+    {text_content[:25000]}
 
     USER REQUEST PARAMETERS:
     - Target Styles: {style_list_str} (Generate one song for each selected style).
@@ -160,8 +201,9 @@ def generate_songs(
 
     try:
         response = model.generate_content(prompt)
-        cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(cleaned_text)
+        raw_text = response.text or ""
+        cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
+        return safe_parse_songs(cleaned_text, styles)
     except Exception as e:
         st.error(f"AI Generation Error: {e}")
         return None
@@ -219,7 +261,7 @@ additional_instructions = st.sidebar.text_area(
 )
 
 # --- MAIN UI ---
-st.title("🎹 StudyBeats AI Pro")
+st.title("🎹 BTN Originals AI Pro")
 st.markdown("Transform NCERT Chapters into custom songs, beyond the notz.")
 
 if "song_data" not in st.session_state:
@@ -283,8 +325,10 @@ if st.session_state.song_data:
 
                 with col2:
                     st.info("🎹 AI Style Prompt")
-                    st.markdown("**Prompt for Suno / AI DAW**")
-                    st.code(song["vibe_description"], language=None)
+                    st.markdown("**Style for Suno**")
+                    # Wrap long style description so full text is visible
+                    wrapped_vibe = textwrap.fill(song["vibe_description"], width=80)
+                    st.code(wrapped_vibe, language=None)
 
                     st.markdown("---")
                     st.success("✨ Tip: Paste this directly into Suno.ai")

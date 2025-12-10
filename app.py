@@ -10,7 +10,7 @@ load_dotenv()
 
 # Page Config
 st.set_page_config(
-    page_title="StudyBeats AI Pro 🎧",
+    page_title="BTN Originals AI Pro 🎧",
     page_icon="🎹",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -97,6 +97,11 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     1. **Educational Accuracy:** You MUST include specific formulas, definitions, and lists from the text.
     2. **Structure:** Strictly follow the "{structure}" outlined above to match the requested time length.
     3. **The Hook:** The chorus must be extremely catchy and repetitive.
+    4. **Signature Intro (MANDATORY):**  
+       - Every song MUST begin with aesthetic vocal ad-libs (e.g., “yeahh”, “okay”, “mmm-hmm”, “uh-huh”, “aye vibe”, etc.)  
+       - These MUST be followed IMMEDIATELY by the line containing the exact phrase **“beyond the notz”**.  
+       - This appears **only once** at the beginning unless the hook repeats it naturally.
+    5. **Signature Phrase in Hook:** The phrase “beyond the notz” must appear **once more** inside the CHORUS of the song.
 
     OUTPUT FORMAT:
     Return ONLY a raw JSON object (no markdown) with this structure:
@@ -231,7 +236,7 @@ if st.session_state.song_data:
                     st.markdown("**Lyrics**")
                     st.code(song['lyrics'], language=None)
                 with col2:
-                    st.info("🎹 AI Production Prompt")
+                    st.info("🎹 Suno AI Style Prompt")
                     st.markdown("**Prompt for Suno / AI DAW**")
                     # COPY-FRIENDLY PRODUCTION PROMPT
                     st.code(song['vibe_description'], language=None)

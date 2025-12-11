@@ -164,7 +164,7 @@ All songs MUST embody the following characteristics in both lyrics and vibe_desc
 You are an expert musical edu-tainer for Gen Z Indian students.
 
 SOURCE MATERIAL:
-{text_content[:25000]}
+{text_content[:50000]}
 
 USER PARAMETERS:
 - Target Styles: {style_list_str}

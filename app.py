@@ -94,9 +94,9 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
 
     REQUIREMENTS:
-    1. **Educational Accuracy:** You MUST include specific formulas, definitions, and lists from the text.
+    1. **Educational Accuracy:** You may include specific formulas, definitions, keywords and lists from the text.
     2. **Structure:** Strictly follow the "{structure}" outlined above to match the requested time length.
-    3. **The Hook:** The chorus must be extremely catchy and repetitive.
+    3. **The Hook:** The chorus must be extremely catchy, groovy and repeat 5 times atleast.
     4. **Signature Intro (MANDATORY):**  
        - Every song MUST begin with aesthetic vocal ad-libs (e.g., “yeahh”, “okay”, “mmm-hmm”, “uh-huh”, “aye vibe”, etc.)  
        - These MUST be followed IMMEDIATELY by the line containing the exact phrase **“beyond the notz”**.  

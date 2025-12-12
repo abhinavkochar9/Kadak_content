@@ -7,6 +7,8 @@ import json
 import io
 import traceback
 import streamlit.components.v1 as components
+import re
+from collections import Counter
 
 # --- CONFIGURATION & SETUP ---
 load_dotenv()
@@ -35,6 +37,7 @@ if api_key:
 def extract_text_from_pdf(pdf_file, max_pages=35):
     """
     Reads up to `max_pages` pages from uploaded PDF (safe for Streamlit UploadedFile).
+    Returns a single string with page blocks separated by double newlines.
     """
     text = ""
     try:
@@ -78,30 +81,87 @@ def try_parse_json(raw_text):
             pass
     return None
 
-def generate_summary20(text_content):
-    """Ask model for a 20-line quick-check summary (fallback safe)."""
-    if not api_key:
-        return "Summary requires Google API key."
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    snippet = text_content[:16000]  # chunk for speed - chapter check
-    prompt = f"""
-Read the SOURCE MATERIAL below and return a concise 20-line summary (one short line each).
-Each line should include 1-3 important keywords or short phrase so I can quickly check coverage.
-Return ONLY 20 lines and nothing else.
+def generate_keywords_per_page(text_content, max_pages=35):
+    """
+    For each page block in text_content (split by double-newline),
+    return a line containing up to 10 short keywords/phrases for that page.
+    The returned string has one line per page (number of lines == pages read).
+    Uses the model where possible; falls back to local keyword extraction if model unavailable.
+    """
+    if not text_content:
+        return "No text to summarise."
 
-SOURCE MATERIAL:
+    # split into page blocks (we used "\n\n" as page separator in extract_text_from_pdf)
+    pages = [p.strip() for p in text_content.split("\n\n") if p.strip()]
+    pages = pages[:max_pages]
+
+    # If no API key or model issues, do a local fallback extractor
+    use_model = bool(api_key)
+
+    results = []
+
+    if use_model:
+        try:
+            model = genai.GenerativeModel("gemini-2.5-flash")
+        except Exception:
+            use_model = False
+
+    for idx, page_text in enumerate(pages, start=1):
+        # short-circuit extremely long page text by slicing
+        snippet = page_text[:12000]  # safe page chunk
+        if use_model:
+            prompt = f"""
+Extract up to 10 short keywords or short phrases (no sentences) that best capture the content of this single page.
+Return them as a single comma-separated line, ideally exactly 10 items but fewer is fine if not available.
+Do NOT add any extra text or numbering — only the comma-separated keywords.
+
+PAGE CONTENT:
 {snippet}
 """
-    try:
-        resp = model.generate_content(prompt)
-        raw = (resp.text or "").strip()
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-        lines = lines[:20]
-        while len(lines) < 20:
-            lines.append("—")
-        return "\n".join(lines)
-    except Exception as e:
-        return f"Summary generation error: {e}"
+            try:
+                resp = model.generate_content(prompt)
+                raw = (resp.text or "").strip()
+                # clean model reply: remove backticks/markdown and extra text
+                cleaned = raw.replace("```", "").strip()
+                # take first line if multiple lines
+                first_line = cleaned.splitlines()[0].strip()
+                # If the model returned something not comma-separated, try to convert whitespace-separated to commas
+                if "," not in first_line and len(first_line.split()) <= 15:
+                    # join top few tokens separated by spaces -> treat as keywords
+                    # fallback: split on common separators
+                    tokens = re.split(r"[;\|\/\-—]+|\s{2,}", first_line)
+                    first_line = ", ".join([t.strip() for t in tokens if t.strip()][:10])
+                # enforce shortness: split and take up to 10
+                kws = [k.strip() for k in re.split(r",|\n|;", first_line) if k.strip()]
+                kws = kws[:10]
+                if not kws:
+                    raise ValueError("empty keywords from model")
+                results.append(", ".join(kws))
+                continue
+            except Exception:
+                # model failed for this page — fallback to local below
+                pass
+
+        # Local fallback: simple frequency-based keyword extraction
+        # Normalize text, remove short words and numbers
+        txt = re.sub(r"[^A-Za-z0-9\s]", " ", page_text)
+        words = [w.lower() for w in txt.split() if len(w) > 3 and not w.isdigit()]
+        if not words:
+            results.append("—")
+            continue
+        counts = Counter(words)
+        most = [w for w, _ in counts.most_common(12)]
+        # keep unique and up to 10
+        seen = []
+        for w in most:
+            if w not in seen:
+                seen.append(w)
+            if len(seen) >= 10:
+                break
+        results.append(", ".join(seen) if seen else "—")
+
+    # Join results: one line per page (matching pages read)
+    return "\n".join(results)
 
 def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, additional_instructions, duration_minutes):
     """
@@ -247,8 +307,8 @@ st.markdown("Transform NCERT Chapters into Custom Songs — signature: *beyond t
 
 if "song_data" not in st.session_state:
     st.session_state.song_data = None
-if "summary20_text" not in st.session_state:
-    st.session_state.summary20_text = None
+if "keywords_per_page" not in st.session_state:
+    st.session_state.keywords_per_page = None
 
 uploaded_file = st.file_uploader("📂 Upload Chapter PDF (up to 35 pages read)", type=["pdf"])
 
@@ -291,9 +351,9 @@ if uploaded_file is not None:
                     )
                 if result:
                     st.session_state.song_data = result
-                    # also generate 20-line summary (quick chapter check)
-                    with st.spinner("📝 Creating 20-line chapter check..."):
-                        st.session_state.summary20_text = generate_summary20(chapter_text)
+                    # --- NEW: generate keywords per page (one line per page, 10 keywords each if possible)
+                    with st.spinner("🔎 Extracting 10 keywords per page..."):
+                        st.session_state.keywords_per_page = generate_keywords_per_page(chapter_text, max_pages=35)
                     st.rerun()
                 else:
                     st.error("No data returned from model. Try again or simplify inputs.")
@@ -320,20 +380,21 @@ if st.session_state.song_data:
                     components.html(copy_button_html(song.get("lyrics", "")), height=44)
                 with col2:
                     st.info("🎹 AI Production Prompt")
-                    st.markdown(f"_{song.get('vibe_description','')}_")
+                    st.markdown(f"_{song.get('vibe_description', '')}_")
                     components.html(copy_button_html(song.get("vibe_description", "")), height=44)
                     st.markdown("---")
                     st.success("✨ Tip: Paste this prompt into Suno.ai or your DAW.")
                     if st.button("🗑️ Clear Results", key=f"clear_{i}"):
                         st.session_state.song_data = None
-                        st.session_state.summary20_text = None
-                        st.experimental_rerun()
+                        st.session_state.keywords_per_page = None
+                        st.rerun()
 
-    # 20-line check summary
+    # --- KEYWORDS PER PAGE (one line per page) ---
     st.divider()
-    st.subheader("📝 20-Line Quick Chapter Check")
-    if st.session_state.summary20_text:
-        st.code(st.session_state.summary20_text, language=None)
-        components.html(copy_button_html(st.session_state.summary20_text), height=44)
+    st.subheader("🔎 10 Keywords per Page (one line = keywords from one page)")
+    if st.session_state.keywords_per_page:
+        # Show as code block where each line corresponds to a page in the same order
+        st.code(st.session_state.keywords_per_page, language=None)
+        components.html(copy_button_html(st.session_state.keywords_per_page), height=44)
     else:
-        st.info("Summary not available. Generate tracks to produce the quick chapter check.")
+        st.info("Keywords per page not generated. Generate tracks to produce them.")

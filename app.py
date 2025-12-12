@@ -4,6 +4,8 @@ import pdfplumber
 from dotenv import load_dotenv
 import os
 import json
+import io
+import traceback
 
 # --- CONFIGURATION & SETUP ---
 load_dotenv()
@@ -33,16 +35,26 @@ if api_key:
 def extract_text_from_pdf(pdf_file):
     """
     Extracts raw text from an uploaded PDF file using pdfplumber.
+    Uses BytesIO to avoid issues with stream objects.
     """
     text = ""
     try:
-        with pdfplumber.open(pdf_file) as pdf:
+        # ensure pointer at start
+        try:
+            pdf_file.seek(0)
+        except Exception:
+            pass
+        raw = pdf_file.read()
+        file_obj = io.BytesIO(raw)
+        with pdfplumber.open(file_obj) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
     except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+        # include traceback so you can see precise failure in-app
+        tb = traceback.format_exc()
+        st.error(f"Error reading PDF: {e}\n\n{tb}")
         return None
     return text
 
@@ -50,7 +62,16 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     """
     Generates songs based on custom user parameters including exact duration in minutes.
     """
-    model = genai.GenerativeModel('gemini-2.5-flash') 
+    # ensure api key is present
+    if not api_key:
+        st.error("Missing Google API key. Provide it in sidebar.")
+        return None
+
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash') 
+    except Exception as e:
+        st.error(f"Model init error: {e}")
+        return None
     
     style_list_str = ", ".join(styles)
     
@@ -65,7 +86,6 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     custom_instructions = f"USER SPECIAL INSTRUCTIONS: {additional_instructions}" if additional_instructions else ""
 
     # --- DURATION TO STRUCTURE MAPPING ---
-    # AI writes text, not time, so we map minutes to structural complexity
     if duration_minutes <= 1.5:
         structure = "Quick Snippet: Verse 1 -> Chorus -> Outro (Approx 150 words)"
     elif 1.5 < duration_minutes <= 2.5:
@@ -114,10 +134,29 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     
     try:
         response = model.generate_content(prompt)
-        cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
+    except Exception as e:
+        tb = traceback.format_exc()
+        st.error(f"AI call error: {e}\n\n{tb}")
+        return None
+
+    # safer access to text
+    raw_text = ""
+    try:
+        raw_text = response.text if hasattr(response, "text") else str(response)
+    except Exception:
+        try:
+            raw_text = str(response)
+        except Exception:
+            raw_text = ""
+
+    cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
+
+    # try parse
+    try:
         return json.loads(cleaned_text)
     except Exception as e:
-        st.error(f"AI Generation Error: {e}")
+        # show debug info, but return None so UI can handle it
+        st.error(f"AI Generation Error: JSON parse failed: {e}\n\nRaw response head:\n{cleaned_text[:1000]}")
         return None
 
 # --- SIDEBAR: CUSTOMIZATION ---

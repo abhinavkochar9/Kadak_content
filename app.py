@@ -122,7 +122,14 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     TASK:
     Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
 
-    REQUIREMENTS:
+    SIGNATURE REQUIREMENT (MANDATORY):
+    - Each song MUST START with short, aesthetic ad-libs (examples: "yeahh", "ayy", "mmm-hmm", "uh-huh", "aye vibe") on their own line(s).
+    - Immediately after the ad-libs, the next line MUST contain the exact phrase (without quotes, lowercase):
+      beyond the notz
+    - The phrase "beyond the notz" must also appear at least once inside the chorus/hook.
+    - Ad-libs should vary between songs and be short (1-3 tokens).
+
+    OTHER REQUIREMENTS:
     1. Educational Accuracy: Include specific formulas, definitions, and lists from the text (where relevant).
     2. Structure: Strictly follow the structure specified above.
     3. Hook: Chorus must be catchy and repetitive.

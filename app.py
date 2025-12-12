@@ -6,6 +6,7 @@ import os
 import json
 import io
 import traceback
+import streamlit.components.v1 as components
 
 # --- CONFIGURATION & SETUP ---
 load_dotenv()
@@ -257,6 +258,22 @@ if uploaded_file is not None:
                         st.session_state.song_data = data
                         st.rerun()
 
+# --- utility: tiny html for copy button ---
+def copy_button_html(text_to_copy, element_id):
+    # Use json.dumps to safely escape text for JS
+    js_text = json.dumps(text_to_copy)
+    html = f"""
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button onclick='navigator.clipboard.writeText({js_text})' 
+              style="
+                padding:6px 10px; border-radius:6px; border:1px solid #ddd; 
+                background:#fff; cursor:pointer; font-weight:600;">
+        📋 Copy
+      </button>
+    </div>
+    """
+    return html
+
 # --- DISPLAY RESULTS ---
 if st.session_state.song_data:
     st.divider()
@@ -264,7 +281,7 @@ if st.session_state.song_data:
     
     songs = st.session_state.song_data.get("songs", [])
     if songs:
-        tabs = st.tabs([s['type'] for s in songs])
+        tabs = st.tabs([s.get('type', f"Track {i+1}") for i, s in enumerate(songs)])
         
         for i, tab in enumerate(tabs):
             song = songs[i]
@@ -272,10 +289,20 @@ if st.session_state.song_data:
                 col1, col2 = st.columns([1.5, 1])
                 with col1:
                     st.subheader(f"Title: {song.get('title','Untitled')}")
-                    st.text_area("Lyrics", value=song.get('lyrics',''), height=600, key=f"lyrics_{i}")
+                    st.markdown("**Lyrics**")
+                    # show code block for lyrics (copy button will copy this exact text)
+                    st.code(song.get('lyrics', ''), language=None)
+                    # copy button html
+                    lyrics_text = song.get('lyrics', '')
+                    chtml = copy_button_html(lyrics_text, f"lyrics_copy_{i}")
+                    components.html(chtml, height=44)
                 with col2:
                     st.info("🎹 **AI Production Prompt**")
                     st.markdown(f"_{song.get('vibe_description','')}_")
+                    # copy button for vibe description
+                    vibe_text = song.get('vibe_description', '')
+                    vhtml = copy_button_html(vibe_text, f"vibe_copy_{i}")
+                    components.html(vhtml, height=44)
                     st.markdown("---")
                     st.success("✨ **Tip:** Use this prompt in Suno.ai")
                     

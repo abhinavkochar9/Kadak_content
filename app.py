@@ -294,7 +294,7 @@ if uploaded_file is not None:
                     # also generate 20-line summary (quick chapter check)
                     with st.spinner("📝 Creating 20-line chapter check..."):
                         st.session_state.summary20_text = generate_summary20(chapter_text)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("No data returned from model. Try again or simplify inputs.")
 

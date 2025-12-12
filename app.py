@@ -335,7 +335,7 @@ Extra instructions: {custom_instructions}
 st.sidebar.header("🎛️ Studio Controls")
 
 style_options = [
-    "Desi Hip-Hop / Trap",
+    "Desi Hip-Hop / Trap","Melodic rap", "Pure English rap",
     "Punjabi Drill",
     "Bollywood Pop Anthem",
     "Lofi Study Beats",

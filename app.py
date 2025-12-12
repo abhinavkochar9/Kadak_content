@@ -252,16 +252,9 @@ style_options = [
     "Old School 90s Rap"
 ]
 
-selected_styles = st.sidebar.multiselect(
-    "Select Music Styles",
-    options=style_options,
-    default=["Desi Hip-Hop / Trap"]
-)
+selected_styles = st.sidebar.multiselect("Select Music Styles", options=style_options, default=["Desi Hip-Hop / Trap"])
 
-custom_style_input = st.sidebar.text_input(
-    "➕ Add Custom Style",
-    placeholder="e.g. K-Pop, Ghazal"
-)
+custom_style_input = st.sidebar.text_input("➕ Add Custom Style", placeholder="e.g. K-Pop, Ghazal")
 
 lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
 

@@ -1,354 +1,287 @@
+import io, os, json, re, random
+from PIL import Image, ImageDraw, ImageFilter
 import streamlit as st
 import google.generativeai as genai
-import pdfplumber 
+import pdfplumber
 from dotenv import load_dotenv
-import os
-import json
-import io
-import re
 
-# --- CONFIGURATION & SETUP ---
+# --- CONFIG ---
 load_dotenv()
-
-st.set_page_config(
-    page_title="BTN Originals AI Pro 🎧",
-    page_icon="🎹",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# API Key Handling
-if "GOOGLE_API_KEY" in os.environ:
-    api_key = os.environ["GOOGLE_API_KEY"]
-else:
-    api_key = st.sidebar.text_input("Enter Google API Key", type="password")
-
+st.set_page_config("BTN Originals AI Pro 🎧", "🎹", layout="wide")
+API_IN_ENV = "GOOGLE_API_KEY" in os.environ
+api_key = os.environ.get("GOOGLE_API_KEY") or st.sidebar.text_input("Enter Google API Key", type="password")
 if api_key:
-    try:
-        genai.configure(api_key=api_key)
-    except Exception as e:
-        st.error(f"API Key Error: {e}")
+    try: genai.configure(api_key=api_key)
+    except Exception as e: st.error(f"API Key Error: {e}")
 else:
-    st.sidebar.warning("No Google API key found. Please enter it to generate songs and summaries.")
+    st.sidebar.warning("Enter Google API key to enable generation.")
 
-# --- PDF EXTRACTION ---
-def extract_text_from_pdf(pdf_file):
-    """
-    Safely extracts raw text from an UploadedFile using pdfplumber.
-    """
-    text = ""
+# --- Helpers (concise) ---
+def read_pdf(uploaded_file, max_pages=None):
+    """Return list of page texts and full combined text."""
+    raw = uploaded_file.read()
+    fileobj = io.BytesIO(raw)
+    pages = []
     try:
-        # Ensure we pass a file-like object (BytesIO) to pdfplumber
-        raw_bytes = pdf_file.read()
-        file_obj = io.BytesIO(raw_bytes)
-        with pdfplumber.open(file_obj) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
+        with pdfplumber.open(fileobj) as pdf:
+            for i, p in enumerate(pdf.pages):
+                if max_pages and i >= max_pages: break
+                t = p.extract_text() or ""
+                pages.append(t.strip())
     except Exception as e:
-        st.error(f"Error reading PDF: {e}")
-        return None
-    return text
+        st.error(f"PDF read error: {e}")
+        return None, ""
+    return pages, "\n".join(pages)
 
-# --- 20 LINE SUMMARY ---
-def generate_summary20(text_content):
-    """
-    Generate a concise 20-line summary (one line = one short sentence/phrase).
-    """
-    if not api_key:
-        st.error("Cannot generate summary: missing API key.")
-        return None
-
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    snippet = text_content[:16000]
-
-    prompt = f"""
-Read the SOURCE MATERIAL below and produce a concise, informative summary of the chapter in EXACTLY 20 lines.
-Each line should include 1–2 important keywords, must be short, and must cover the entire chapter.
-
-Return ONLY the 20 lines. No extra text.
-
-SOURCE MATERIAL:
-{snippet}
-"""
-
-    try:
-        resp = model.generate_content(prompt)
-        raw = (resp.text or "").strip()
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-
-        # If too many lines → cut to 20
-        lines = lines[:20]
-
-        # If too few → pad with placeholders
-        while len(lines) < 20:
-            lines.append("—")
-
-        return "\n".join(lines)
-
-    except Exception as e:
-        st.error(f"Summary Generation Error: {e}")
-        return None
-
-# --- SONG GENERATION ---
-def try_parse_json_from_text(raw_text):
-    """Try to extract/parse a JSON object from raw model text."""
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        pass
-    # try to extract first {...} block
-    start = raw_text.find("{")
-    end = raw_text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = raw_text[start:end+1]
-        try:
-            return json.loads(candidate)
-        except Exception:
-            pass
+def try_parse_json(raw):
+    try: return json.loads(raw)
+    except: 
+        s = raw.find("{"); e = raw.rfind("}")
+        if s!=-1 and e!=-1 and e>s:
+            try: return json.loads(raw[s:e+1])
+            except: return None
     return None
 
-def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, additional_instructions, duration_minutes):
-
-    if not api_key:
-        st.error("Cannot generate songs: missing API key.")
+def call_model(prompt, max_output_tokens=1200):
+    if not api_key: return None
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    try:
+        r = model.generate_content(prompt)
+        return (r.text or "").strip()
+    except Exception as e:
+        st.error(f"Model error: {e}")
         return None
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
-    style_list_str = ", ".join(styles)
-
-    # LANGUAGE LOGIC
-    language_instruction = "Balanced Hinglish"
-    if language_mix < 30:
-        language_instruction = "Mostly Hindi with English scientific terms"
-    elif language_mix > 70:
-        language_instruction = "Mostly English with Hindi connectors"
-
-    # DESCRIPTION INPUTS
-    focus_instruction = (
-        f"Focus specifically on this topic: {focus_topic}"
-        if focus_topic else
-        "Cover the most important exam topics from the chapter."
-    )
-
-    artist_instruction = f"Take inspiration from the style of: {artist_ref}" if artist_ref else ""
-    custom_instructions = f"USER SPECIAL INSTRUCTIONS: {additional_instructions}" if additional_instructions else ""
-
-    # STRUCTURE MAPPING
-    if duration_minutes <= 1.5:
-        structure = "Quick Snippet: Chorus -> Verse 1 -> Chorus -> Outro (~150 words)"
-    elif duration_minutes <= 2.5:
-        structure = "Radio Edit: Chorus -> Verse 1 -> Chorus -> Verse 2 -> Chorus (~200–250 words)"
-    elif duration_minutes <= 3.5:
-        structure = "Full Song: Intro -> Chorus -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Bridge -> Chorus (~400 words)"
-    else:
-        structure = "Extended Anthem (~450+ words)"
-
-    STYLE_REQUIREMENTS = """
-All songs MUST embody the following characteristics in both lyrics and vibe_description:
-- melodic rap soulmate style
-- confident, classroom-friendly but powerful
-- addictive and legendary
-- viral, catchy, enthusiastic
-- Hindi + English hybrid
-- melody-driven writing
-- cinematic rise sections
-- groove-heavy rhythms
-- correct pronunciation of pure English words
-- extremely smooth, emotional, aesthetic Gen-Z friendly storytelling
-"""
-
+# --- Song prompt builder (keeps your rules) ---
+def build_song_prompt(text_snippet, styles, lang_mix, artist_ref, focus_topic, extra, duration_minutes):
+    style_list = ", ".join(styles)
+    lang = "Balanced Hinglish"
+    if lang_mix < 30: lang = "Mostly Hindi with English scientific terms"
+    if lang_mix > 70: lang = "Mostly English with Hindi connectors"
+    if artist_ref: artist_txt = f"Take inspiration from: {artist_ref}"
+    else: artist_txt = ""
+    structure = ("Short" if duration_minutes<=1.5 else
+                 "Radio" if duration_minutes<=2.5 else
+                 "Full" if duration_minutes<=3.5 else "Extended")
+    style_req = ("melodic rap soulmate style; confident; classroom-friendly but powerful; addictive; "
+                 "legendary; viral; catchy; enthusiastic; Hindi+English; melody; cinematic rise; groove; "
+                 "pronounce pure English words correctly")
     prompt = f"""
-You are an expert musical edu-tainer for Gen Z Indian students.
+You are an expert musical edu-tainer for Gen Z students.
 
-SOURCE MATERIAL:
-{text_content[:50000]}
+SOURCE:
+{text_snippet[:100000]}
 
-USER PARAMETERS:
-- Target Styles: {style_list_str}
-- Language Mix: {language_instruction}
-- Content Focus: {focus_instruction}
-- Artist Inspiration: {artist_instruction}
-- Target Duration: {duration_minutes} minutes
-- Required Structure: {structure}
-- {custom_instructions}
+INPUTS:
+- Styles: {style_list}
+- Language: {lang}
+- Focus: {focus_topic or 'general'}
+- {artist_txt}
+- Duration-type: {structure}
+- Extra: {extra}
 
-MANDATORY SONG RULES:
-1. The VERY FIRST lines must be aesthetic ad-libs (e.g., "yeahh", "aye vibe", "mmm-hmm", etc.).
-2. Immediately after ad-libs, the next line MUST contain exactly:
-   beyond the notz
-3. The structure MUST follow this sequence (strict):
-   [CHORUS]
-   [VERSE 1]
-   [CHORUS]
-   [VERSE 2]
-   [CHORUS]
-   [VERSE 3]
-   [CHORUS]
-   [VERSE 4]
-   [CHORUS]
-4. The chorus must appear AT LEAST 5 times (more is allowed).
-5. Every VERSE must have no more than 6 lines.
-6. The CHORUS must include beyond the notz once inside it.
-7. Include key formulas, definitions & keywords inside VERSES only.
-8. Maintain the STYLE REQUIREMENTS below in every song:
+REQUIREMENTS:
+1) FIRST lines: short aesthetic ad-libs (e.g., 'yeahh', 'aye vibe', 'mmm-hmm'), then a line with exactly:
+beyond the notz
+2) SECTION ORDER (strict): [CHORUS] [VERSE 1] [CHORUS] [VERSE 2] [CHORUS] [VERSE 3] [CHORUS] [VERSE 4] [CHORUS]
+   Chorus appears at least 5 times. Verses max 6 lines each.
+3) Chorus must include 'beyond the notz' at least once.
+4) Label sections like [CHORUS], [VERSE 1], etc.
+5) Include formulas/definitions/keywords inside verses only.
+6) Maintain style: {style_req}
 
-{STYLE_REQUIREMENTS}
-
-OUTPUT FORMAT:
-Return ONLY valid JSON:
+OUTPUT: Return ONLY valid JSON:
 {{
   "songs": [
     {{
       "type": "Style Name",
       "title": "Creative Song Title",
-      "vibe_description": "Describe production style (include all style requirements).",
-      "lyrics": "Full lyrics with section labels."
+      "vibe_description": "Detailed production prompt (include style requirements).",
+      "lyrics": "Full lyrics with labels and newlines preserved."
     }}
   ]
 }}
 """
+    return prompt
 
-    try:
-        resp = model.generate_content(prompt)
-        raw = (resp.text or "").strip()
-        # first try parse
-        parsed = try_parse_json_from_text(raw)
-        if parsed and "songs" in parsed:
-            return parsed
-        # fallback: try to build safe structure if model returned raw text
-        # Create a single-song fallback using the raw response
-        fallback = {
-            "songs": [
-                {
-                    "type": styles[0] if styles else "Custom Style",
-                    "title": "BTN Originals - fallback (raw output)",
-                    "vibe_description": "Fallback: raw model output; please inspect.",
-                    "lyrics": raw
-                }
-            ]
-        }
-        # also try second attempt: ask model to reformat to JSON (only if initial output clearly not JSON)
-        # but keep it minimal here: return fallback so UI isn't silent
-        st.warning("Model output wasn't valid JSON. Showing raw output in a fallback song. If this persists, try re-running or simplifying the prompt.")
-        return fallback
+# --- Keywords per page (10-20 per page) ---
+def keywords_per_page(pages, per_page_min=10, per_page_max=20, max_pages=20):
+    results = []
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    for i, page in enumerate(pages[:max_pages], start=1):
+        if not page.strip(): 
+            results.append((i, [])); continue
+        prompt = f"""Read the PAGE text below and return a list of {per_page_min}-{per_page_max} short keywords or short phrases (no sentences), one per line, that capture the main terms/concepts on this page. Return ONLY the list, nothing else.
 
-    except Exception as e:
-        st.error(f"AI Generation Error: {e}")
-        return None
+PAGE:
+{page[:8000]}
+"""
+        try:
+            r = model.generate_content(prompt)
+            raw = (r.text or "").strip()
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+            # trim/pad to requested count
+            count = min(per_page_max, max(per_page_min, len(lines)))
+            lines = lines[:count]
+            results.append((i, lines))
+        except Exception as e:
+            results.append((i, [f"Error generating keywords: {e}"]))
+    return results
 
-# --- SIDEBAR ---
-st.sidebar.header("🎛️ Studio Controls")
+# --- Auto Suno style extractor (one-line) ---
+def generate_suno_style(vibe_description, lyrics):
+    prompt = f"""Read the vibe_description and lyrics below. Suggest a single concise Suno.ai style prompt (1-2 sentences) that fits the song perfectly, mentioning instruments, tempo/bpm hint, mood, and lead vocal type. Return ONLY the single line.
 
-style_options = [
-    "Desi Hip-Hop / Trap",
-    "HOOKY & VIRAL MELODIC RAP",
-    "Punjabi Drill",
-    "Bollywood Pop Anthem",
-    "Lofi Study Beats",
-    "Sufi Rock",
-    "EDM / Party",
-    "Old School 90s Rap"
-]
+VIBE:
+{vibe_description[:2000]}
 
-selected_styles = st.sidebar.multiselect("Select Music Styles", options=style_options, default=["Desi Hip-Hop / Trap"])
-custom_style_input = st.sidebar.text_input("➕ Add Custom Style", placeholder="e.g. K-Pop, Ghazal")
-lang_mix = st.sidebar.slider("Hindi vs English", 0, 100, 50)
-duration_minutes = st.sidebar.slider("Length (Minutes)", 1.0, 5.0, 2.5, 0.5)
-artist_ref = st.sidebar.text_input("Artist Inspiration", placeholder="e.g. Divine, Arijit")
-focus_topic = st.sidebar.text_input("Focus Topic", placeholder="e.g. Soaps, Genetics")
-additional_instructions = st.sidebar.text_area("Extra Instructions", height=80)
+LYRICS:
+{lyrics[:2000]}
+"""
+    return call_model(prompt) or "Suno style: modern melodic-rap, mid-tempo, warm synths, groovy drums, emotive male lead."
 
-# --- MAIN UI ---
+# --- Simple 1:1 abstract cover generator (no words/formulas) ---
+def create_abstract_cover(theme_keywords, size=1024):
+    # derive palette from keywords (simple hash -> color)
+    seed = sum(ord(c) for c in (" ".join(theme_keywords) or "btn"))
+    random.seed(seed)
+    def rand_color():
+        return tuple(int(random.random()*160 + 60) for _ in range(3))
+    c1, c2 = rand_color(), rand_color()
+    img = Image.new("RGB", (size, size), c1)
+    draw = ImageDraw.Draw(img)
+    # gradient + soft ellipse
+    for i in range(size):
+        r = int(c1[0] + (c2[0]-c1[0]) * (i/size))
+        g = int(c1[1] + (c2[1]-c1[1]) * (i/size))
+        b = int(c1[2] + (c2[2]-c1[2]) * (i/size))
+        draw.line([(0,i),(size,i)], fill=(r,g,b))
+    # add blurred shapes
+    for _ in range(6):
+        ellipse = Image.new("RGBA", (size, size))
+        ed = ImageDraw.Draw(ellipse)
+        x0 = random.randint(-size//4, size//2); y0 = random.randint(-size//4, size//2)
+        w = random.randint(size//3, size*2//3)
+        ed.ellipse([x0,y0,x0+w,y0+w], fill=rand_color()+(120,))
+        img = Image.alpha_composite(img.convert("RGBA"), ellipse).convert("RGB")
+    img = img.filter(ImageFilter.GaussianBlur(radius=6))
+    return img
+
+# --- UI / Main (concise) ---
 st.title("🎹 BTN Originals AI Pro")
-st.markdown("Transform NCERT Chapters into Custom Songs.")
+st.markdown("Transform NCERT Chapters into Custom Songs. (May take 2–3 minutes for best results)")
 
-if "song_data" not in st.session_state:
-    st.session_state.song_data = None
-if "summary20_text" not in st.session_state:
-    st.session_state.summary20_text = None
+# sidebar inputs (short)
+styles_list = ["Desi Hip-Hop / Trap","HOOKY & VIRAL MELODIC RAP","Punjabi Drill","Bollywood Pop Anthem","Lofi Study Beats","Sufi Rock","EDM / Party","Old School 90s Rap"]
+selected_styles = st.sidebar.multiselect("Select Styles", styles_list, default=[styles_list[0]])
+custom_style = st.sidebar.text_input("➕ Add Custom Style")
+if custom_style.strip(): 
+    if custom_style not in selected_styles: selected_styles.append(custom_style)
+lang_mix = st.sidebar.slider("Hindi vs English", 0,100,50)
+duration_minutes = st.sidebar.slider("Length (min)",1.0,5.0,2.5,0.5)
+artist_ref = st.sidebar.text_input("Artist Inspiration")
+focus_topic = st.sidebar.text_input("Focus Topic")
+extra_instr = st.sidebar.text_area("Extra instructions", height=80)
+uploaded = st.file_uploader("📂 Upload Chapter PDF", type=["pdf"])
+generate = st.button("🚀 Generate Tracks")
 
-uploaded_file = st.file_uploader("📂 Upload PDF", type=["pdf"])
-
-if uploaded_file is not None:
-    generate_btn = st.button("🚀 Generate Tracks")
-
-    if generate_btn:
-        final_styles = selected_styles.copy()
-        if custom_style_input and custom_style_input.strip():
-            if custom_style_input not in final_styles:
-                final_styles.append(custom_style_input)
-
-        if not api_key:
-            st.warning("Please provide a Google API Key in the sidebar.")
-        elif not final_styles:
-            st.warning("Please select at least one style.")
-        else:
-            # Extraction spinner
-            with st.spinner("Extracting PDF text..."):
-                chapter_text = extract_text_from_pdf(uploaded_file)
-
-            if not chapter_text:
-                st.error("Failed to extract text from PDF or PDF was empty.")
+if uploaded and generate:
+    # read pages (no page limit here, but keywords will limit to first 20 pages)
+    pages, full_text = read_pdf(uploaded)
+    if not full_text:
+        st.error("Could not extract text from PDF.")
+    else:
+        with st.spinner("Composing songs (this may take up to 2-3 minutes)..."):
+            prompt = build_song_prompt(full_text, selected_styles, lang_mix, artist_ref, focus_topic, extra_instr, duration_minutes)
+            raw = call_model(prompt)
+            parsed = try_parse_json(raw or "")
+            if parsed and parsed.get("songs"):
+                songs = parsed["songs"]
             else:
-                # Composition spinner
-                with st.spinner("Composing tracks (this can take ~20-40s)..."):
-                    songs_data = generate_songs(
-                        chapter_text,
-                        final_styles,
-                        lang_mix,
-                        artist_ref,
-                        focus_topic,
-                        additional_instructions,
-                        duration_minutes
-                    )
+                # fallback single raw song
+                songs = [{
+                    "type": selected_styles[0] if selected_styles else "Custom",
+                    "title": "BTN fallback output",
+                    "vibe_description": raw or "No vibe returned.",
+                    "lyrics": raw or "No lyrics returned."
+                }]
+                st.warning("Model didn't return clean JSON; showing fallback raw output.")
+            st.session_state.song_data = {"songs": songs}
+        # generate per-page keywords (may take time)
+        with st.spinner("Extracting keywords per page (10-20 each)..."):
+            page_keywords = keywords_per_page(pages, 10, 20, max_pages=20)
+            st.session_state.page_keywords = page_keywords
+        # generate 20-line summary (longer)
+        with st.spinner("Generating 20-line summary..."):
+            summary_prompt = f"Summarize the SOURCE below into exactly 20 short lines (one line each) covering key points and keywords. SOURCE:\n{full_text[:120000]}"
+            summary_raw = call_model(summary_prompt) or ""
+            # normalize lines to 20
+            lines = [ln.strip() for ln in summary_raw.splitlines() if ln.strip()][:20]
+            while len(lines) < 20: lines.append("—")
+            st.session_state.summary20_text = "\n".join(lines)
+        # auto suno style and cover generation for first song
+        first = st.session_state.song_data["songs"][0]
+        with st.spinner("Auto-generating Suno style and cover..."):
+            suno_style = generate_suno_style(first.get("vibe_description",""), first.get("lyrics",""))
+            st.session_state.auto_suno_style = suno_style
+            # choose theme keywords for cover from page keywords or summary
+            theme_kw = [kw for _, kws in st.session_state.page_keywords for kw in kws][:6] or []
+            cover_img = create_abstract_cover(theme_kw, size=1024)
+            cover_bytes = io.BytesIO()
+            cover_img.save(cover_bytes, format="PNG")
+            cover_bytes.seek(0)
+            st.session_state.cover_bytes = cover_bytes
 
-                if songs_data:
-                    st.session_state.song_data = songs_data
-                    # Generate 20-line summary in background step (still synchronous)
-                    with st.spinner("Generating 20-line chapter summary..."):
-                        summary_text = generate_summary20(chapter_text)
-                        st.session_state.summary20_text = summary_text
-                    st.rerun()
-                else:
-                    st.error("No data returned from model. Try again or simplify inputs.")
-
-# --- DISPLAY RESULTS ---
-if st.session_state.song_data:
+# --- Display Results ---
+if st.session_state.get("song_data"):
     st.divider()
     st.subheader("🎵 Generated Tracks")
+    songs = st.session_state.song_data["songs"]
+    tabs = st.tabs([s.get("type", f"Track {i+1}") for i,s in enumerate(songs)])
+    for i, tab in enumerate(tabs):
+        s = songs[i]
+        with tab:
+            col1, col2 = st.columns([1.6,1])
+            with col1:
+                st.subheader(s.get("title","Untitled"))
+                st.markdown("**Lyrics**")
+                # expanders avoid copy-icon overlap and show full text
+                with st.expander("Show lyrics (copy-button included)"):
+                    st.code(s.get("lyrics",""), language=None)
+            with col2:
+                st.info("🎹 Auto Suno Style (AI-suggested)")
+                # separate container for style so copy icon doesn't overlap
+                with st.expander("Suno.ai style (copyable)"):
+                    st.code(st.session_state.get("auto_suno_style", s.get("vibe_description","")), language=None)
+                st.markdown("")
+                st.success("✨ Tip: Paste this into Suno.ai (or tweak BPM/instruments).")
+                if st.button(f"🗑️ Clear Results", key=f"clear_{i}"):
+                    st.session_state.pop("song_data", None)
+                    st.session_state.pop("summary20_text", None)
+                    st.session_state.pop("page_keywords", None)
+                    st.session_state.pop("auto_suno_style", None)
+                    st.session_state.pop("cover_bytes", None)
+                    st.experimental_rerun()
 
-    songs = st.session_state.song_data.get("songs", [])
-    if not songs:
-        st.error("No songs found in the model output.")
-    else:
-        tabs = st.tabs([s.get('type', f"Track {i+1}") for i, s in enumerate(songs)])
-
-        for i, tab in enumerate(tabs):
-            song = songs[i]
-            with tab:
-                col1, col2 = st.columns([1.5, 1])
-
-                with col1:
-                    st.subheader(song.get("title", f"Track {i+1}"))
-                    st.markdown("**Lyrics**")
-                    st.code(song.get("lyrics", "No lyrics returned."), language=None)
-
-                with col2:
-                    st.info("🎹 Suno AI Style Prompt")
-                    st.code(song.get("vibe_description", "No vibe description returned."), language=None)
-
-                    if st.button(f"🗑️ Clear Results", key=f"clear_{i}"):
-                        st.session_state.song_data = None
-                        st.session_state.summary20_text = None
-                        st.rerun()
-
-    # --- SUMMARY ---
+    # cover + summary + page keywords
     st.divider()
-    st.subheader("📝 20-Line Summary (Quick Chapter Check)")
-    if st.session_state.summary20_text:
-        st.code(st.session_state.summary20_text, language=None)
+    st.subheader("🖼️ Auto-generated 1:1 Spotify-style cover (no words/formula)")
+    if st.session_state.get("cover_bytes"):
+        st.image(st.session_state["cover_bytes"].getvalue(), use_column_width=False, width=320)
+        st.download_button("Download cover (PNG)", st.session_state["cover_bytes"].getvalue(), file_name="cover.png", mime="image/png")
+    st.divider()
+    st.subheader("📝 20-line summary (chapter check)")
+    if st.session_state.get("summary20_text"):
+        st.code(st.session_state["summary20_text"], language=None)
+
+    st.divider()
+    st.subheader("🔎 10–20 keywords per page (first 20 pages)")
+    if st.session_state.get("page_keywords"):
+        for pnum, kws in st.session_state["page_keywords"]:
+            st.markdown(f"**Page {pnum}**")
+            st.code("\n".join(kws), language=None)
     else:
-        st.info("Summary not generated. Re-run generation to create the 20-line summary.")
+        st.info("No page keywords generated.")
+
+else:
+    st.info("Upload a PDF, choose style(s), and press Generate. Note: full-run may take up to 2–3 minutes for best viral output.")

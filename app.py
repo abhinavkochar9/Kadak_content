@@ -33,9 +33,10 @@ if api_key:
 
 # --- HELPER FUNCTIONS ---
 
-def extract_text_from_pdf(pdf_file):
+def extract_text_from_pdf(pdf_file, max_pages=35):
     """
     Extracts raw text from an uploaded PDF file using pdfplumber.
+    Reads up to `max_pages` pages (default 35).
     Uses BytesIO to be safe with uploaded files from Streamlit.
     """
     text = ""
@@ -48,10 +49,14 @@ def extract_text_from_pdf(pdf_file):
         raw_bytes = pdf_file.read()
         file_obj = io.BytesIO(raw_bytes)
         with pdfplumber.open(file_obj) as pdf:
-            for page in pdf.pages:
+            total_pages = len(pdf.pages)
+            pages_to_read = min(total_pages, max_pages)
+            for idx in range(pages_to_read):
+                page = pdf.pages[idx]
                 page_text = page.extract_text()
                 if page_text:
-                    text += page_text + "\n"
+                    # add a page break marker to help the model if needed
+                    text += page_text + "\n\n"
     except Exception as e:
         tb = traceback.format_exc()
         st.error(f"Error reading PDF: {e}\n\n{tb}")
@@ -61,6 +66,7 @@ def extract_text_from_pdf(pdf_file):
 def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, additional_instructions, duration_minutes):
     """
     Generates songs based on custom user parameters including exact duration in minutes.
+    Uses a larger slice of the text (up to ~200k chars) to cover more pages.
     """
     if not api_key:
         st.error("Missing Google API key. Please enter it in the sidebar.")
@@ -85,7 +91,6 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     custom_instructions = f"USER SPECIAL INSTRUCTIONS: {additional_instructions}" if additional_instructions else ""
 
     # --- DURATION TO STRUCTURE MAPPING ---
-    # AI writes text, not time, so we map minutes to structural complexity
     if duration_minutes <= 1.5:
         structure = "Quick Snippet: Verse 1 -> Chorus -> Outro (Approx 150 words)"
     elif 1.5 < duration_minutes <= 2.5:
@@ -95,28 +100,32 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     else: # > 3.5 minutes
         structure = "Extended Anthem: Intro -> Verse 1 -> Chorus -> Verse 2 -> Chorus -> Solo/Bridge -> Verse 3 -> Chorus -> Outro (Approx 400+ words)"
 
+    # Use a larger slice so model sees more content (up to ~200k chars)
+    # The extract_text_from_pdf already limits pages; slicing here is an additional safety.
+    source_snippet = text_content[:200000]
+
     prompt = f"""
     You are an expert musical edu-tainer for Gen Z Indian students (Class 10 CBSE).
     
-    SOURCE MATERIAL (TEXTBOOK CHAPTER):
-    {text_content[:25000]} 
+    SOURCE MATERIAL (TEXTBOOK CHAPTER) - up to 35 pages:
+    {source_snippet}
 
     USER REQUEST PARAMETERS:
-    - **Target Styles:** {style_list_str} (Generate one song for each selected style).
-    - **Language Mix:** {language_instruction}.
-    - **Content Focus:** {focus_instruction}.
-    - **Artist Inspiration:** {artist_instruction}.
-    - **Target Duration:** {duration_minutes} Minutes.
-    - **Required Structure:** {structure}
-    - **Special Instructions:** {custom_instructions}
+    - Target Styles: {style_list_str} (Generate one song for each selected style).
+    - Language Mix: {language_instruction}.
+    - Content Focus: {focus_instruction}.
+    - Artist Inspiration: {artist_instruction}.
+    - Target Duration: {duration_minutes} Minutes.
+    - Required Structure: {structure}
+    - Special Instructions: {custom_instructions}
 
     TASK:
     Create distinct musical lyrics for the selected styles to help students memorize the content. Do not mention book name.
 
     REQUIREMENTS:
-    1. **Educational Accuracy:** You MUST include specific formulas, definitions, and lists from the text.
-    2. **Structure:** Strictly follow the "{structure}" outlined above to match the requested time length.
-    3. **The Hook:** The chorus must be extremely catchy and repetitive.
+    1. Educational Accuracy: Include specific formulas, definitions, and lists from the text (where relevant).
+    2. Structure: Strictly follow the structure specified above.
+    3. Hook: Chorus must be catchy and repetitive.
 
     OUTPUT FORMAT:
     Return ONLY a raw JSON object (no markdown) with this structure:
@@ -152,7 +161,6 @@ def generate_songs(text_content, styles, language_mix, artist_ref, focus_topic, 
     try:
         return json.loads(cleaned_text)
     except Exception:
-        # Show a warning and return fallback single-song structure
         st.warning("Model output was not valid JSON — returning raw output in a fallback song. Check the 'Style Prompt' box for details.")
         fallback = {
             "songs": [
@@ -240,8 +248,9 @@ if uploaded_file is not None:
             st.warning("Please select a style or add a custom one.")
             
         else:
-            with st.spinner("🎧 Extraction & Composing... (This may take 30 seconds)"):
-                chapter_text = extract_text_from_pdf(uploaded_file)
+            with st.spinner("🎧 Extraction & Composing... (This may take longer for many pages)"):
+                # Read up to 35 pages end-to-end
+                chapter_text = extract_text_from_pdf(uploaded_file, max_pages=35)
                 
                 if chapter_text:
                     # Pass duration_minutes to the generator
@@ -252,7 +261,7 @@ if uploaded_file is not None:
                         artist_ref, 
                         focus_topic, 
                         additional_instructions,
-                        duration_minutes  # <--- NEW ARGUMENT
+                        duration_minutes
                     )
                     if data:
                         st.session_state.song_data = data
@@ -290,21 +299,20 @@ if st.session_state.song_data:
                 with col1:
                     st.subheader(f"Title: {song.get('title','Untitled')}")
                     st.markdown("**Lyrics**")
-                    # show code block for lyrics (copy button will copy this exact text)
                     st.code(song.get('lyrics', ''), language=None)
                     # copy button html
                     lyrics_text = song.get('lyrics', '')
                     chtml = copy_button_html(lyrics_text, f"lyrics_copy_{i}")
                     components.html(chtml, height=44)
                 with col2:
-                    st.info("🎹 **AI Production Prompt**")
+                    st.info("🎹 ** Suno AI Style Prompt**")
                     st.markdown(f"_{song.get('vibe_description','')}_")
                     # copy button for vibe description
                     vibe_text = song.get('vibe_description', '')
                     vhtml = copy_button_html(vibe_text, f"vibe_copy_{i}")
                     components.html(vhtml, height=44)
                     st.markdown("---")
-                    st.success("✨ **Tip:** Use this prompt in Suno.ai")
+                    st.success("✨ Tip: Use this prompt in Suno.ai")
                     
                     if st.button(f"🗑️ Clear Results", key=f"clear_{i}"):
                         st.session_state.song_data = None
